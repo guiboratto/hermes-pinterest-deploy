@@ -82,12 +82,20 @@ app.get('/', (req, res) => {
 });
 
 // ---------- OAuth2 Authorization Code flow ----------
+// Determine public base URL: explicit env var, or reconstruct from Render proxy headers
+function publicBaseUrl(req) {
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL;
+  const proto = req.get('x-forwarded-proto') || 'https';
+  const host = req.get('x-forwarded-host') || req.get('host');
+  return `${proto}://${host}`;
+}
+
 app.get('/oauth/pinterest/start', (req, res) => {
   if (!PINTEREST_APP_ID) return res.status(500).send('PINTEREST_APP_ID env var not set');
   const state = Math.random().toString(36).slice(2);
   const url = `https://www.pinterest.com/oauth/?` + new URLSearchParams({
     client_id: PINTEREST_APP_ID,
-    redirect_uri: `${PUBLIC_URL}/oauth/pinterest/callback`,
+    redirect_uri: `${publicBaseUrl(req)}/oauth/pinterest/callback`,
     response_type: 'code',
     scope: PINTEREST_SCOPES,
     state
@@ -106,7 +114,7 @@ app.get('/oauth/pinterest/callback', async (req, res) => {
       new URLSearchParams({
         grant_type: 'authorization_code',
         code,
-        redirect_uri: `${PUBLIC_URL}/oauth/pinterest/callback`,
+        redirect_uri: `${publicBaseUrl(req)}/oauth/pinterest/callback`,
         client_id: PINTEREST_APP_ID,
         client_secret: PINTEREST_APP_SECRET
       }),
