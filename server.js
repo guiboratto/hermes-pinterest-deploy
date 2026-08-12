@@ -120,16 +120,16 @@ app.get('/oauth/pinterest/callback', async (req, res) => {
   if (!PINTEREST_APP_ID || !PINTEREST_APP_SECRET) return res.status(500).send('Missing Pinterest app credentials');
 
   try {
-    const tokenResp = await axios.post('https://api.pinterest.com/v5/oauth/token',
-      new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: `${publicBaseUrl(req)}/oauth/pinterest/callback`,
-        client_id: PINTEREST_APP_ID,
-        client_secret: PINTEREST_APP_SECRET
-      }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
-    );
+    const tokenResp = await axios.post('https://api.pinterest.com/v5/oauth/token', {
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: `${publicBaseUrl(req)}/oauth/pinterest/callback`,
+      client_id: PINTEREST_APP_ID,
+      client_secret: PINTEREST_APP_SECRET
+    }, {
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      timeout: 15000
+    });
     const t = tokenResp.data;
     const expiresAt = Math.floor(Date.now() / 1000) + (t.expires_in || 2592000);
     db.prepare('INSERT INTO tokens (access_token, refresh_token, expires_at, created_at) VALUES (?, ?, ?, ?)')
