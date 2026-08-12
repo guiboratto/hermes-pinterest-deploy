@@ -38,6 +38,16 @@ db.exec(`
 `);
 
 const app = express();
+
+app.get('/debug/env', (req, res) => res.json({
+  PUBLIC_URL: process.env.PUBLIC_URL || null,
+  PORT: process.env.PORT || null,
+  PINTEREST_APP_ID: process.env.PINTEREST_APP_ID || null,
+  host_header: req.get('host'),
+  x_forwarded_proto: req.get('x-forwarded-proto'),
+  x_forwarded_host: req.get('x-forwarded-host')
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
