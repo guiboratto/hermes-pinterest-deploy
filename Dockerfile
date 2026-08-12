@@ -1,5 +1,17 @@
-FROM n8nio/n8n:latest
+FROM node:20-alpine
 
-# Healthcheck uses wget (already in alpine)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+WORKDIR /app
+
+# Install deps
+COPY package.json ./
+RUN npm install --omit=dev --no-audit --no-fund
+
+# Copy source
+COPY server.js ./
+
+# Healthcheck uses wget (built into alpine)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD wget --quiet --tries=1 --spider http://localhost:5678/healthz || exit 1
+
+EXPOSE 5678
+CMD ["node", "server.js"]
