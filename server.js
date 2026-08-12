@@ -1,11 +1,17 @@
-// Hermes Pinterest Pipeline - production-ready for Standard access video demo
-// Public URL: https://hermes-pinterest.onrender.com
+// Hermes Pinterest Pipeline + Landings server
+// - /healthz                              : liveness
+// - /                                     : dashboard
+// - /oauth/pinterest/*                    : OAuth flow
+// - /publish                              : pin publish
+// - /landings/<ASIN>/                     : affiliate landing
+// - /api/asins                            : list of ASINs
 
 const express = require('express');
 const axios = require('axios');
 const cron = require('node-cron');
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
 const PORT = process.env.PORT || 5678;
 const PUBLIC_URL_ENV = process.env.PUBLIC_URL;
@@ -24,6 +30,12 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Serve static landings directory (lives alongside this server)
+app.use('/landings', express.static(path.join(__dirname, 'landings')));
+
+// Also expose gifs for direct use in pins
+app.use('/gifs', express.static(path.join(__dirname, 'gifs')));
+
 function publicBaseUrl(req) {
   if (PUBLIC_URL_ENV) return PUBLIC_URL_ENV;
   const proto = req.get('x-forwarded-proto') || 'https';
@@ -32,7 +44,30 @@ function publicBaseUrl(req) {
 }
 
 // ---------- Health ----------
-app.get('/healthz', (req, res) => res.json({ status: 'ok', service: 'hermes-pinterest', ts: Date.now() }));
+app.get('/healthz', (req, res) => res.json({ status: 'ok', service: 'hermes-pinterest+landings', ts: Date.now() }));
+
+// ---------- API: ASINs ----------
+function listAsins() {
+  const dir = path.join(__dirname, 'landings');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name);
+}
+
+function loadAsinMeta(asin) {
+  try {
+    const data = JSON.parse(fs.readFileSync(`/home/guiboratto/.hermes/affiliate_machine/asins/${asin}.json`));
+    return { asin, title: data.title, price: data.price, rating: data.rating };
+  } catch {
+    return { asin, title: asin, price: '?', rating: '5.0' };
+  }
+}
+
+app.get('/api/asins', (req, res) => {
+  const asins = listAsins().map(loadAsinMeta);
+  res.json({ count: asins.length, asins });
+});
 
 // ---------- Dashboard ----------
 app.get('/', (req, res) => {
@@ -40,6 +75,7 @@ app.get('/', (req, res) => {
   const recentPins = db.prepare('SELECT * FROM pin_log ORDER BY id DESC LIMIT 10').all();
   const oauthOk = stored && stored.expires_at > Math.floor(Date.now() / 1000);
   const envTokenOk = !!PINTEREST_ACCESS_TOKEN;
+  const asinCount = listAsins().length;
   res.send([
     '<!DOCTYPE html><html><head><title>Hermes Pinterest Pipeline</title>',
     '<style>body{font-family:system-ui;max-width:900px;margin:40px auto;padding:24px;color:#333}',
@@ -48,19 +84,16 @@ app.get('/', (req, res) => {
     'th,td{border:1px solid #ddd;padding:6px;text-align:left}</style></head><body>',
     '<h1>🎯 Hermes Pinterest Pipeline</h1>',
     '<div class="card"><strong>OAuth status:</strong> ',
-    oauthOk
-      ? '<span class="ok">✅ connected (OAuth)</span>'
-      : (envTokenOk ? '<span class="ok">✅ ready (sandbox token)</span>' : '<span class="err">❌ not connected</span>'),
+    oauthOk ? '<span class="ok">✅ connected (OAuth)</span>' : (envTokenOk ? '<span class="ok">✅ ready (sandbox token)</span>' : '<span class="err">❌ not connected</span>'),
     envTokenOk ? ' — using PINTEREST_ACCESS_TOKEN env var' : '',
     oauthOk ? ` — <a href="/oauth/pinterest/start">Re-connect</a>` : ' — <a href="/oauth/pinterest/start">Connect Pinterest</a>',
     '</div>',
     '<div class="card"><strong>Public URL:</strong> ', publicBaseUrl(req), '<br>',
-    '<strong>OAuth callback:</strong> ', publicBaseUrl(req), '/oauth/pinterest/callback</div>',
+    '<strong>OAuth callback:</strong> ', publicBaseUrl(req), '/oauth/pinterest/callback<br>',
+    '<strong>Affiliate landings:</strong> ', asinCount, ' (<a href="/api/asins">list</a>)</div>',
     '<div class="card"><strong>Recent pins:</strong> ',
-    recentPins.length === 0
-      ? '<em>no pins yet</em>'
-      : '<table><tr><th>Time</th><th>ASIN</th><th>Board</th><th>Pin ID</th><th>Status</th></tr>' +
-        recentPins.map(p => `<tr><td>${new Date(p.created_at * 1000).toLocaleString()}</td><td>${p.asin}</td><td>${p.board_id}</td><td>${p.pin_id || '-'}</td><td>${p.status}</td></tr>`).join('') + '</table>',
+    recentPins.length === 0 ? '<em>no pins yet</em>' : '<table><tr><th>Time</th><th>ASIN</th><th>Board</th><th>Pin ID</th><th>Status</th></tr>' +
+      recentPins.map(p => `<tr><td>${new Date(p.created_at * 1000).toLocaleString()}</td><td>${p.asin}</td><td>${p.board_id}</td><td>${p.pin_id || '-'}</td><td>${p.status}</td></tr>`).join('') + '</table>',
     '</div>',
     '<div class="card"><form method="POST" action="/publish" style="display:inline">',
     '<button type="submit">📌 Publish next ASIN now</button></form></div>',
@@ -142,11 +175,12 @@ async function publishOne() {
   const boardId = BOARD_MAP[item.boardKey];
   if (!boardId) throw new Error('No board for ' + item.boardKey);
 
+  const landingUrl = publicBaseUrl({ get: () => null }) + '/landings/' + item.asin + '/';
   const payload = {
     board_id: boardId,
     title: item.title + ' - $' + item.price + ' on Amazon',
     description: item.title + ' - premium quality at $' + item.price + '. ' + item.rating + '★ from real buyers. #ad #affiliate #amazonfinds',
-    link: 'https://www.amazon.com/dp/' + item.asin + '/?tag=redvibes20-20&linkCode=ogi&th=1',
+    link: landingUrl,  // POINTS TO OUR LANDING, which has affiliate link
     alt_text: item.title + ' - $' + item.price + ' on Amazon - ' + item.rating + ' stars - #ad #affiliate',
     media_source: { source_type: 'image_url', url: 'https://pub-ce32d87fa3e24cf9bdf9bacd8ec03704.r2.dev/pin/' + item.asin + '.png' }
   };
@@ -176,4 +210,4 @@ cron.schedule('0 */4 * * *', async () => {
   await publishOne();
 });
 
-app.listen(PORT, () => console.log('hermes-pinterest listening on ' + PORT + ', public=' + (PUBLIC_URL_ENV || 'detected-per-request')));
+app.listen(PORT, () => console.log('hermes-pinterest+landings listening on ' + PORT));
