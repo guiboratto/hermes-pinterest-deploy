@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATLAS — Hermes Control Center</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0a0f;
+  --bg2: #15151c;
+  --bg3: #1f1f28;
+  --border: #2a2a35;
+  --text: #e8e8ed;
+  --text2: #a0a0b0;
+  --accent: #00d4aa;
+  --accent2: #ffaa00;
+  --danger: #ff5555;
+  --success: #00d4aa;
+  --warn: #ffaa00;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+.container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+header h1 { font-size: 28px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+header .subtitle { color: var(--text2); font-size: 14px; }
+.status-pill { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.status-ok { background: rgba(0,212,170,0.15); color: var(--success); }
+.status-warn { background: rgba(255,170,0,0.15); color: var(--warn); }
+.status-err { background: rgba(255,85,85,0.15); color: var(--danger); }
+.tabs { display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.tab { padding: 12px 20px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px 8px 0 0; cursor: pointer; color: var(--text2); font-weight: 500; transition: all 0.2s; }
+.tab:hover { background: var(--bg3); color: var(--text); }
+.tab.active { background: var(--bg3); color: var(--accent); border-color: var(--accent); }
+.tab-content { display: none; padding: 24px; background: var(--bg2); border: 1px solid var(--border); border-radius: 0 8px 8px 8px; }
+.tab-content.active { display: block; }
+.card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.card h3 { color: var(--accent); margin-bottom: 8px; font-size: 16px; }
+.card p, .card li { color: var(--text2); font-size: 14px; margin: 4px 0; }
+.metric { display: inline-block; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 4px 8px 4px 0; min-width: 140px; }
+.metric .value { font-size: 28px; font-weight: 700; color: var(--accent); }
+.metric .label { color: var(--text2); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--text2); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+tr:hover td { background: var(--bg); }
+code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 12px; color: var(--accent); }
+.btn { background: var(--accent); color: var(--bg); border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.btn:hover { background: #00b890; }
+.btn-warn { background: var(--warn); color: var(--bg); }
+.btn-warn:hover { background: #dd8c00; }
+.btn-danger { background: var(--danger); color: white; }
+input, select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 14px; }
+.form-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+.search-input { width: 100%; padding: 12px; }
+.result-item { padding: 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.result-item:hover { background: var(--bg); }
+.result-score { display: inline-block; background: var(--accent); color: var(--bg); padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; margin-right: 8px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 768px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+  <div>
+    <h1>ATLAS</h1>
+    <div class="subtitle">Hermes Control Center · Pristine Luxe US</div>
+  </div>
+  <div>
+    <span id="global-status" class="status-pill status-ok">● Online</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="control">Control Center</div>
+  <div class="tab" data-tab="studio">Studio</div>
+  <div class="tab" data-tab="publishing">Publishing</div>
+  <div class="tab" data-tab="research">Research</div>
+  <div class="tab" data-tab="market">Market Intel</div>
+  <div class="tab" data-tab="social">Social</div>
+  <div class="tab" data-tab="crm">CRM</div>
+  <div class="tab" data-tab="automations">Automations</div>
+</div>
+
+<!-- Control Center -->
+<div class="tab-content active" id="tab-control">
+  <h2 style="margin-bottom:16px">📊 System Status</h2>
+  <div id="control-content"><div class="spinner"></div> Loading...</div>
+</div>
+
+<!-- Studio -->
+<div class="tab-content" id="tab-studio">
+  <h2 style="margin-bottom:16px">🎨 Studio — Generate Content</h2>
+  <div id="studio-content"><div class="spinner"></div> Loading...</div>
+</div>
+
+<!-- Publishing -->
+<div class="tab-content" id="tab-publishing">
+  <h2 style="margin-bottom:16px">📤 Publishing — Send to Social</h2>
+  <div id="publishing-content"><div class="spinner"></div> Loading...</div>
+</div>
+
+<!-- Research -->
+<div class="tab-content" id="tab-research">
+  <h2 style="margin-bottom:16px">🔍 Research — Search All Files</h2>
+  <div class="card">
+    <input type="text" id="search-input" class="search-input" placeholder="Search across 2518 indexed files (cat litter, buffer mcp, wan2gp, pinterest, amazon affiliate...)">
+    <button class="btn" onclick="doSearch()" style="margin-top:8px">Search</button>
+  </div>
+  <div id="search-results"></div>
+</div>
+
+<!-- Market Intel -->
+<div class="tab-content" id="tab-market">
+  <h2 style="margin-bottom:16px">📈 Market Intelligence</h2>
+  <div id="market-content"><div class="spinner"></div> Loading...</div>
+</div>
+
+<!-- Social -->
+<div class="tab-content" id="tab-social">
+  <h2 style="margin-bottom:16px">🌐 Social — Channel Status</h2>
+  <div id="social-content"><div class="spinner"></div> Loading...</div>
+</div>
+
+<!-- CRM -->
+<div class="tab-content" id="tab-crm">
+  <h2 style="margin-bottom:16px">👥 CRM — Click History</h2>
+  <div id="crm-content"><div class="spinner"></div> Loading...</div>
+</div>
+
+<!-- Automations -->
+<div class="tab-content" id="tab-automations">
+  <h2 style="margin-bottom:16px">⚙️ Automations — Cron & Schedules</h2>
+  <div id="automations-content"><div class="spinner"></div> Loading...</div>
+</div>
+
+</div>
+
+<script>
+const API = '';
+
+async function api(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    loadTab(tab.dataset.tab);
+  });
+});
+
+async function loadTab(name) {
+  try {
+    if (name === 'control') return loadControl();
+    if (name === 'studio') return loadStudio();
+    if (name === 'publishing') return loadPublishing();
+    if (name === 'market') return loadMarket();
+    if (name === 'social') return loadSocial();
+    if (name === 'crm') return loadCrm();
+    if (name === 'automations') return loadAutomations();
+  } catch (e) { console.error(e); }
+}
+
+async function loadControl() {
+  const d = await api('/atlas/api/system-status');
+  document.getElementById('control-content').innerHTML = `
+    <div class="grid-3">
+      <div class="metric"><div class="value">${d.pinterest.connected ? '✅' : '❌'}</div><div class="label">Pinterest</div></div>
+      <div class="metric"><div class="value">${d.pinterest.posts_scheduled || 0}</div><div class="label">Posts Scheduled</div></div>
+      <div class="metric"><div class="value">${d.pinterest.paused ? '⏸️' : '▶️'}</div><div class="label">Pinterest Status</div></div>
+      <div class="metric"><div class="value">${d.ryzen.alive ? '✅' : '❌'}</div><div class="label">RyZen GPU</div></div>
+      <div class="metric"><div class="value">${d.render.service || 'live'}</div><div class="label">Render Service</div></div>
+      <div class="metric"><div class="value">${d.system.disk_pct || '?'}%</div><div class="label">Disk Used</div></div>
+    </div>
+    <div class="card">
+      <h3>Recent Buffer Posts</h3>
+      <table>
+        <tr><th>Channel</th><th>Status</th><th>When</th><th>ID</th></tr>
+        ${(d.recent_posts || []).map(p => `
+          <tr>
+            <td>${p.channel || '?'}</td>
+            <td><span class="status-pill status-${p.status === 'sent' ? 'ok' : 'warn'}">${p.status}</span></td>
+            <td>${p.due_at || p.sent_at || '?'}</td>
+            <td><code>${p.id || '?'}</code></td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+    <div class="card">
+      <h3>System Resources</h3>
+      <p>CPU: ${d.system.cpu || 'N100'}</p>
+      <p>RAM: ${d.system.ram_used || '?'} / ${d.system.ram_total || '?'} (${d.system.ram_pct || '?'}%)</p>
+      <p>Disk: ${d.system.disk_used || '?'} / ${d.system.disk_total || '?'} (${d.system.disk_pct || '?'}%)</p>
+      <p>Uptime: ${d.system.uptime || '?'}</p>
+    </div>
+  `;
+}
+
+async function loadStudio() {
+  const d = await api('/atlas/api/landings');
+  document.getElementById('studio-content').innerHTML = `
+    <div class="card">
+      <h3>Available ASINs with GIFs & Landings</h3>
+      <table>
+        <tr><th>ASIN</th><th>Title</th><th>Price</th><th>GIF</th><th>Landing</th><th>Status</th></tr>
+        ${(d.asins || []).map(a => `
+          <tr>
+            <td><code>${a.asin}</code></td>
+            <td>${a.title || '?'}</td>
+            <td>$${a.price || '?'}</td>
+            <td>${a.gif ? `<a href="${a.gif}" target="_blank">View</a>` : '❌'}</td>
+            <td>${a.landing ? `<a href="${a.landing}" target="_blank">View</a>` : '❌'}</td>
+            <td><span class="status-pill status-${a.posted ? 'ok' : 'warn'}">${a.posted ? 'Posted' : 'Ready'}</span></td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+    <div class="card">
+      <h3>Generate new content</h3>
+      <p>ASIN: <input type="text" id="gen-asin" placeholder="B000XXXXXX"></p>
+      <p>Type: <select id="gen-type"><option value="gif">GIF (5 images)</option><option value="video">UGC Video</option></select></p>
+      <button class="btn" onclick="generateContent()">Generate</button>
+      <div id="gen-result" style="margin-top:12px"></div>
+    </div>
+  `;
+}
+
+async function generateContent() {
+  const asin = document.getElementById('gen-asin').value.trim();
+  if (!asin) return alert('Enter ASIN');
+  document.getElementById('gen-result').innerHTML = '<div class="spinner"></div> Generating...';
+  try {
+    const r = await api(`/atlas/api/landings/generate?asin=${encodeURIComponent(asin)}`);
+    document.getElementById('gen-result').innerHTML = `<pre>${JSON.stringify(r, null, 2)}</pre>`;
+    loadStudio(); // refresh
+  } catch (e) {
+    document.getElementById('gen-result').innerHTML = `❌ ${e.message}`;
+  }
+}
+
+async function loadPublishing() {
+  const d = await api('/atlas/api/queue');
+  document.getElementById('publishing-content').innerHTML = `
+    <div class="card">
+      <h3>Queue</h3>
+      <p>Paused: <span class="status-pill status-${d.paused ? 'warn' : 'ok'}">${d.paused ? '⏸️ YES' : '▶️ NO'}</span></p>
+      <p>Sentinel: <code>${d.sentinel || 'none'}</code></p>
+      <p>Items: ${d.items ? d.items.length : 0}</p>
+      ${d.paused ? '<button class="btn" onclick="unpause()">▶️ Resume</button>' : '<button class="btn btn-warn" onclick="pause()">⏸️ Pause</button>'}
+    </div>
+    <div class="card">
+      <h3>Trigger publish</h3>
+      <p>ASIN: <input type="text" id="pub-asin" placeholder="B0009X29WK"></p>
+      <p>Channels: <select id="pub-channels" multiple>
+        <option value="pinterest" selected>Pinterest</option>
+        <option value="threads">Threads</option>
+        <option value="tiktok" disabled>TikTok (disconnected)</option>
+      </select></p>
+      <button class="btn" onclick="triggerPublish()">Publish now</button>
+      <div id="pub-result" style="margin-top:12px"></div>
+    </div>
+  `;
+}
+
+async function pause() {
+  await api('/atlas/api/queue/pause', {method: 'POST'});
+  loadPublishing();
+}
+async function unpause() {
+  await api('/atlas/api/queue/unpause', {method: 'POST'});
+  loadPublishing();
+}
+async function triggerPublish() {
+  const asin = document.getElementById('pub-asin').value.trim();
+  if (!asin) return alert('Enter ASIN');
+  document.getElementById('pub-result').innerHTML = '<div class="spinner"></div> Publishing...';
+  try {
+    const r = await api(`/atlas/api/publish?asin=${encodeURIComponent(asin)}`, {method: 'POST'});
+    document.getElementById('pub-result').innerHTML = `<pre>${JSON.stringify(r, null, 2)}</pre>`;
+  } catch (e) {
+    document.getElementById('pub-result').innerHTML = `❌ ${e.message}`;
+  }
+}
+
+async function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) return;
+  document.getElementById('search-results').innerHTML = '<div class="spinner"></div>';
+  try {
+    const d = await api(`/atlas/api/search?q=${encodeURIComponent(q)}&top=20`);
+    document.getElementById('search-results').innerHTML = `
+      <div class="card">
+        <h3>Results for "${q}" — ${d.results ? d.results.length : 0} hits</h3>
+        ${(d.results || []).map(r => `
+          <div class="result-item">
+            <span class="result-score">${r.score.toFixed(1)}</span>
+            <code>${r.path}</code>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('search-results').innerHTML = `❌ ${e.message}`;
+  }
+}
+
+document.getElementById('search-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') doSearch(); });
+
+async function loadMarket() {
+  const d = await api('/atlas/api/landings');
+  document.getElementById('market-content').innerHTML = `
+    <div class="card">
+      <h3>Top ASINs by Posted Status</h3>
+      <table>
+        <tr><th>ASIN</th><th>Title</th><th>Price</th><th>Status</th></tr>
+        ${(d.asins || []).slice(0, 20).map(a => `
+          <tr>
+            <td><code>${a.asin}</code></td>
+            <td>${a.title || '?'}</td>
+            <td>$${a.price || '?'}</td>
+            <td><span class="status-pill status-${a.posted ? 'ok' : 'warn'}">${a.posted ? 'Posted' : 'Pending'}</span></td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+  `;
+}
+
+async function loadSocial() {
+  const d = await api('/atlas/api/pins');
+  document.getElementById('social-content').innerHTML = `
+    <div class="card">
+      <h3>Buffer Channels</h3>
+      <div class="grid-3">
+        ${(d.channels || []).map(c => `
+          <div class="card">
+            <h3>${c.service || '?'}</h3>
+            <p><strong>${c.name || c.id || '?'}</strong></p>
+            <p>Status: <span class="status-pill status-${c.isDisconnected ? 'err' : 'ok'}">${c.isDisconnected ? '❌ Disconnected' : '✅ Connected'}</span></p>
+            <p>ID: <code>${c.id || '?'}</code></p>
+          </div>
+        `).join('') || '<p>No channels</p>'}
+      </div>
+    </div>
+    <div class="card">
+      <h3>Recent Posts</h3>
+      <table>
+        <tr><th>Channel</th><th>Status</th><th>Scheduled</th><th>Post ID</th></tr>
+        ${(d.posts || []).slice(0, 10).map(p => `
+          <tr>
+            <td>${p.channelService || p.channelId || '?'}</td>
+            <td><span class="status-pill status-${p.status === 'sent' ? 'ok' : 'warn'}">${p.status || '?'}</span></td>
+            <td>${p.dueAt || p.sentAt || '?'}</td>
+            <td><code>${p.id || '?'}</code></td>
+          </tr>
+        `).join('') || '<tr><td colspan="4">No posts yet</td></tr>'}
+      </table>
+    </div>
+  `;
+}
+
+async function loadCrm() {
+  const d = await api('/atlas/api/pins');
+  const totalClicks = (d.posts || []).filter(p => p.status === 'sent').length;
+  document.getElementById('crm-content').innerHTML = `
+    <div class="card">
+      <h3>Click Tracking</h3>
+      <p>Click tracking через лендінги (analytics on R2 or Render landing pages)</p>
+      <p>Поки що: <code>0 clicks</code> (tracking не налаштований)</p>
+    </div>
+    <div class="card">
+      <h3>Posts Count</h3>
+      <div class="grid-3">
+        <div class="metric"><div class="value">${(d.posts || []).length}</div><div class="label">Total Posts</div></div>
+        <div class="metric"><div class="value">${(d.posts || []).filter(p => p.status === 'scheduled').length}</div><div class="label">Scheduled</div></div>
+        <div class="metric"><div class="value">${(d.posts || []).filter(p => p.status === 'sent').length}</div><div class="label">Sent</div></div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadAutomations() {
+  const d = await api('/atlas/api/automations');
+  document.getElementById('automations-content').innerHTML = `
+    <div class="card">
+      <h3>PAUSE_PINTEREST Sentinel</h3>
+      <p>Status: <span class="status-pill status-${d.paused ? 'warn' : 'ok'}">${d.paused ? '⏸️ PAUSED' : '▶️ ACTIVE'}</span></p>
+      <p>Path: <code>${d.sentinel_path}</code></p>
+      <p>Last rate check: ${d.last_rate_check || 'N/A'}</p>
+      <p>Pin token recovery: ${d.recovery_status || 'Checking...'}</p>
+      ${d.paused ? '<button class="btn" onclick="unpauseAuto()">▶️ Resume Pinterest</button>' : '<button class="btn btn-warn" onclick="pauseAuto()">⏸️ Pause Pinterest</button>'}
+    </div>
+    <div class="card">
+      <h3>Active Crons</h3>
+      <table>
+        <tr><th>Schedule</th><th>Command</th></tr>
+        ${(d.crons || []).map(c => `<tr><td><code>${c.schedule}</code></td><td>${c.command}</td></tr>`).join('')}
+      </table>
+    </div>
+  `;
+}
+
+async function pauseAuto() { await fetch('/atlas/api/automations/pause', {method: 'POST'}); loadAutomations(); }
+async function unpauseAuto() { await fetch('/atlas/api/automations/unpause', {method: 'POST'}); loadAutomations(); }
+
+// Initial load
+loadControl();
+</script>
+</body></html>

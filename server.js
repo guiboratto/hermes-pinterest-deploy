@@ -33,6 +33,9 @@ app.use(express.urlencoded({ extended: true }));
 // Serve static landings directory (lives alongside this server)
 app.use('/landings', express.static(path.join(__dirname, 'landings')));
 
+// Serve static atlas directory (single-page dashboard)
+app.use('/atlas', express.static(path.join(__dirname, 'atlas')));
+
 // Also expose gifs for direct use in pins
 app.use('/gifs', express.static(path.join(__dirname, 'gifs')));
 
@@ -210,4 +213,276 @@ cron.schedule('0 */4 * * *', async () => {
   await publishOne();
 });
 
-app.listen(PORT, () => console.log('hermes-pinterest+landings listening on ' + PORT));
+app.listen(PORT, () => console.log('hermes-pinterest+landings+atlas listening on ' + PORT));
+
+// ====================== ATLAS API ENDPOINTS ======================
+
+// ATLAS client for Buffer MCP (singleton)
+const BUFFER_MCP = 'https://mcp.buffer.com/mcp';
+const BUFFER_ORG = '66c6eabcf4576562564695b5';
+const BUFFER_TOKEN = process.env.BUFFER_MCP_TOKEN || '2rifEyGCAZAHC5HITPFbiIdx3Wq4jyUTaiIR-WZU9S8';
+const BUFFER_PINTEREST = '686efebe111211c55714e0a4';
+const BUFFER_THREADS = '67e93a8c53d152b9da612d9c';
+
+async function bufferCall(name, args) {
+  const r = await axios.post(BUFFER_MCP, {
+    jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name, arguments: args }
+  }, {
+    headers: { 'Authorization': `Bearer ${BUFFER_TOKEN}`, 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+    timeout: 30000
+  });
+  const text = r.data?.result?.content?.[0]?.text || '{}';
+  try { return JSON.parse(text); } catch { return { raw: text }; }
+}
+
+app.get('/atlas/api/system-status', async (req, res) => {
+  try {
+    // Check PAUSE_PINTEREST sentinel
+    const fs = require('fs');
+    const sentinel = '/home/guiboratto/.hermes/state/PAUSE_PINTEREST';
+    const paused = fs.existsSync(sentinel);
+
+    // Get recent posts from Buffer
+    let recentPosts = [];
+    try {
+      const posts = await bufferCall('list_posts', { organizationId: BUFFER_ORG });
+      recentPosts = (posts.posts || []).slice(0, 10);
+    } catch {}
+
+    // Get Pinterest channel
+    let pinChannel = null;
+    try {
+      const chans = await bufferCall('list_channels', { organizationId: BUFFER_ORG });
+      pinChannel = (chans || []).find(c => c.service === 'pinterest');
+    } catch {}
+
+    res.json({
+      pinterest: {
+        connected: !!pinChannel && !pinChannel.isDisconnected,
+        channel_id: pinChannel?.id,
+        posts_scheduled: recentPosts.length,
+        paused
+      },
+      ryzen: { alive: false, note: 'crossover issue, not reachable via SSH' },
+      render: { service: 'live', url: 'https://hermes-pinterest.onrender.com' },
+      system: {
+        cpu: 'Intel N100', ram_used: '7.0Gi', ram_total: '11Gi', ram_pct: '64',
+        disk_used: '410G', disk_total: '445G', disk_pct: '92',
+        uptime: '~3 days'
+      },
+      recent_posts: recentPosts,
+      asin: process.env.NODE_ENV || 'demo'
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/atlas/api/queue', async (req, res) => {
+  const fs = require('fs');
+  const sentinel = '/home/guiboratto/.hermes/state/PAUSE_PINTEREST';
+  res.json({
+    paused: fs.existsSync(sentinel),
+    sentinel,
+    items: QUEUE,
+    boards: BOARD_MAP
+  });
+});
+
+app.post('/atlas/api/queue/pause', (req, res) => {
+  const fs = require('fs');
+  fs.writeFileSync('/home/guiboratto/.hermes/state/PAUSE_PINTEREST', '');
+  res.json({ ok: true, paused: true });
+});
+
+app.post('/atlas/api/queue/unpause', (req, res) => {
+  const fs = require('fs');
+  try { fs.unlinkSync('/home/guiboratto/.hermes/state/PAUSE_PINTEREST'); } catch {}
+  res.json({ ok: true, paused: false });
+});
+
+app.get('/atlas/api/landings', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const landingsDir = path.join(__dirname, 'landings');
+  const gifsDir = path.join(__dirname, 'gifs');
+  const asins = [];
+  if (fs.existsSync(landingsDir)) {
+    for (const d of fs.readdirSync(landingsDir, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      const asin = d.name;
+      const hasGif = fs.existsSync(path.join(landingsDir, asin, 'product.gif'));
+      const hasHtml = fs.existsSync(path.join(landingsDir, asin, 'index.html'));
+      // Get metadata from ASIN data
+      let title = '?', price = '?', rating = '?', posted = false;
+      try {
+        const asinData = JSON.parse(fs.readFileSync(`/home/guiboratto/.hermes/affiliate_machine/asins/${asin}.json`));
+        title = asinData.title || '?';
+        price = asinData.price || '?';
+        rating = asinData.rating || '?';
+      } catch {}
+      // Check if posted in DB
+      try {
+        const Database = require('better-sqlite3');
+        const con = new Database('/home/guiboratto/.hermes/amazon_products.db', { readonly: true });
+        const r = con.prepare('SELECT posted FROM products WHERE asin = ?').get(asin);
+        if (r) posted = r.posted === 1;
+        con.close();
+      } catch {}
+      asins.push({
+        asin, title, price, rating, posted,
+        gif: hasGif ? `${req.protocol}://${req.get('host')}/gifs/${asin}_product.gif` : null,
+        landing: hasHtml ? `${req.protocol}://${req.get('host')}/landings/${asin}/` : null
+      });
+    }
+  }
+  res.json({ count: asins.length, asins });
+});
+
+app.post('/atlas/api/landings/generate', async (req, res) => {
+  const { spawn } = require('child_process');
+  const asin = req.query.asin;
+  if (!asin) return res.status(400).json({ error: 'asin required' });
+  // Trigger generation (uses existing mockup_or_download)
+  // For now: just copy existing mockup + build landing
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const gifDir = path.join(__dirname, 'gifs');
+    const landDir = path.join(__dirname, 'landings', asin);
+    landDir.mkdir(parents=True, exist_ok=True);
+    // Find a mockup
+    const candidates = require('glob').sync(`/home/guiboratto/hermes-mockups/${asin}*.png`);
+    if (!candidates.length) return res.status(404).json({ error: 'no mockup found' });
+    const mp = candidates[0];
+    // Build 5 variants and GIF
+    const imgs = [];
+    for (let i = 1; i <= 5; i++) {
+      const out = path.join(gifDir, `${asin}_v${i}.jpg`);
+      const cmd = `ffmpeg -y -loglevel error -i "${mp}" -vf "scale=1088:1920:force_original_aspect_ratio=increase,crop=1088:1920,setsar=1,format=yuv420p" -q:v 2 "${out}"`;
+      require('child_process').execSync(cmd, { timeout: 30000 });
+      imgs.push(out);
+    }
+    // Build GIF
+    const gifOut = path.join(gifDir, `${asin}_product.gif`);
+    const inputs = imgs.map(p => ['-loop', '1', '-t', '2', '-i', p]).flat();
+    const filterParts = imgs.map((_, i) => `[${i}:v]scale=1088:1920,setsar=1,format=yuv420p[v${i}]`).join(';');
+    const concatInput = imgs.map((_, i) => `[v${i}]`).join('');
+    const fullFilter = `${filterParts};${concatInput}concat=n=${imgs.length}:v=1:a=0,fps=10,scale=540:960:flags=lanczos,setsar=1,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`;
+    require('child_process').execSync(`ffmpeg -y -loglevel error ${inputs.map(a => `"${a}"`).join(' ')} -filter_complex "${fullFilter}" -loop 0 "${gifOut}"`, { timeout: 60000, shell: true });
+    // Copy GIF to landing
+    fs.copyFileSync(gifOut, path.join(landDir, 'product.gif'));
+    // Build landing HTML
+    let title = asin, price = '?', rating = '?';
+    try {
+      const ad = JSON.parse(fs.readFileSync(`/home/guiboratto/.hermes/affiliate_machine/asins/${asin}.json`));
+      title = ad.title; price = ad.price; rating = ad.rating;
+    } catch {}
+    const html = `<!DOCTYPE html><html><head><title>${title} - $${price}</title><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#fff;line-height:1.5}.c{max-width:540px;margin:0 auto;padding:20px;text-align:center}.gif{width:100%;border-radius:12px;margin-bottom:20px;box-shadow:0 8px 24px rgba(0,0,0,0.4)}h1{font-size:24px;margin-bottom:8px}.price{font-size:36px;font-weight:700;color:#0a7d0a;margin:16px 0}.cta{display:inline-block;background:#ffaa00;color:#000;padding:16px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:18px;margin:16px 0}</style></head><body><div class="c"><img src="product.gif" class="gif"><h1>${title}</h1><div class="price">$${price}</div><p>⭐ ${rating}/5 on Amazon</p><a href="https://www.amazon.com/dp/${asin}/?tag=redvibes20-20&linkCode=ogi&th=1" target="_blank" rel="noopener sponsored" class="cta">See it on Amazon →</a><p style="color:#888;font-size:12px;margin-top:24px">#ad #affiliate</p></div></body></html>`;
+    fs.writeFileSync(path.join(landDir, 'index.html'), html);
+    res.json({ ok: true, asin, gif: `${req.protocol}://${req.get('host')}/gifs/${asin}_product.gif`, landing: `${req.protocol}://${req.get('host')}/landings/${asin}/` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/atlas/api/pins', async (req, res) => {
+  try {
+    const posts = await bufferCall('list_posts', { organizationId: BUFFER_ORG });
+    const chans = await bufferCall('list_channels', { organizationId: BUFFER_ORG });
+    res.json({
+      channels: chans || [],
+      posts: (posts.posts || []).slice(0, 50)
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/atlas/api/publish', async (req, res) => {
+  const asin = req.query.asin;
+  if (!asin) return res.status(400).json({ error: 'asin required' });
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    let title = asin;
+    try {
+      const ad = JSON.parse(fs.readFileSync(`/home/guiboratto/.hermes/affiliate_machine/asins/${asin}.json`));
+      title = ad.title;
+    } catch {}
+    const gifUrl = `https://pub-ce32d87fa3e24cf9bdf9bacd8ec03704.r2.dev/pin/${asin}_product.gif`;
+    const landingUrl = `${req.protocol}://${req.get('host')}/landings/${asin}/`;
+    // Find Pinterest boardServiceId
+    const boardKey = (title || '').toLowerCase().includes('cat') ? 'pets-cat-care' :
+                     (title || '').toLowerCase().includes('spray') || (title || '').toLowerCase().includes('clean') ? 'home-cleaning-essentials' :
+                     (title || '').toLowerCase().includes('tool') || (title || '').toLowerCase().includes('hand') ? 'tools-hand' : 'home-cleaning-essentials';
+    const boardServiceId = BOARD_MAP[boardKey] || '1117174320005947890';
+    // Publish to Pinterest + Threads
+    const results = [];
+    for (const ch of [
+      { id: BUFFER_PINTEREST, name: 'pinterest' },
+      { id: BUFFER_THREADS, name: 'threads' }
+    ]) {
+      try {
+        const args = {
+          organizationId: BUFFER_ORG,
+          channelId: ch.id,
+          schedulingType: 'automatic',
+          text: `${title} - Amazon #ad #affiliate`,
+          assets: [{ image: { url: gifUrl, thumbnailUrl: gifUrl } }],
+          metadata: ch.name === 'pinterest'
+            ? { pinterest: { link: landingUrl, boardServiceId } }
+            : { threads: { link: landingUrl } }
+        };
+        const r = await bufferCall('create_post', args);
+        results.push({ channel: ch.name, ok: !r.error, result: r });
+      } catch (e) { results.push({ channel: ch.name, ok: false, error: e.message }); }
+    }
+    res.json({ asin, results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/atlas/api/search', async (req, res) => {
+  const q = req.query.q;
+  const top = parseInt(req.query.top || '20');
+  if (!q) return res.status(400).json({ error: 'q required' });
+  try {
+    const r = await axios.get(`http://127.0.0.1:8766/search?q=${encodeURIComponent(q)}&top=${top}`, { timeout: 15 });
+    res.json(r.data);
+  } catch (e) { res.status(500).json({ error: 'search server unavailable' }); }
+});
+
+app.get('/atlas/api/automations', (req, res) => {
+  const fs = require('fs');
+  const cp = require('child_process');
+  const sentinel = '/home/guiboratto/.hermes/state/PAUSE_PINTEREST';
+  const log = (() => { try { return fs.readFileSync('/home/guiboratto/.hermes/logs/pinterest_rate_check.log', 'utf8').split('\n').slice(-5).join('\n'); } catch { return 'N/A'; } })();
+  const lastRateCheck = (() => { try { return fs.readFileSync('/home/guiboratto/.hermes/state/PINTEREST_RESTORED.flag', 'utf8'); } catch { return 'N/A'; } })();
+  // Get crontab
+  let crons = [];
+  try { crons = cp.execSync('crontab -l 2>/dev/null', { encoding: 'utf8' }).split('\n').filter(l => l.trim() && !l.startsWith('#')).map(l => ({ schedule: l.split(' ').slice(0, 5).join(' '), command: l.split(' ').slice(5).join(' ') })); } catch {}
+  res.json({
+    paused: fs.existsSync(sentinel),
+    sentinel_path: sentinel,
+    last_rate_check: log,
+    recovery_status: lastRateCheck,
+    crons
+  });
+});
+
+app.post('/atlas/api/automations/pause', (req, res) => {
+  require('fs').writeFileSync('/home/guiboratto/.hermes/state/PAUSE_PINTEREST', '');
+  res.json({ ok: true });
+});
+
+app.post('/atlas/api/automations/unpause', (req, res) => {
+  try { require('fs').unlinkSync('/home/guiboratto/.hermes/state/PAUSE_PINTEREST'); } catch {}
+  res.json({ ok: true });
+});
+
+app.get('/atlas/api/market', (req, res) => {
+  // Top ASINs
+  const fs = require('fs');
+  const Database = require('better-sqlite3');
+  try {
+    const con = new Database('/home/guiboratto/.hermes/amazon_products.db', { readonly: true });
+    const top = con.prepare('SELECT asin, title, price, posted FROM products WHERE price IS NOT NULL ORDER BY price DESC LIMIT 50').all();
+    con.close();
+    res.json({ top });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
