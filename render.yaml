@@ -6,20 +6,16 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
     envVars:
-      - key: N8N_HOST
-        value: hermes-pinterest.onrender.com
       - key: N8N_PORT
-        value: 5678
+        value: "5678"
       - key: N8N_PROTOCOL
         value: https
-      - key: WEBHOOK_URL
-        value: https://hermes-pinterest.onrender.com/
       - key: GENERIC_TIMEZONE
         value: Europe/Kiev
-      - key: N8N_SECURE_COOKIE
-        value: "false"
       - key: DB_TYPE
         value: sqlite
+      - key: DB_SQLITE_DATABASE
+        value: /home/node/.n8n/database.sqlite
       - key: DB_SQLITE_VACUUM_ON_STARTUP
         value: "true"
       - key: EXECUTIONS_DATA_PRUNE
@@ -28,10 +24,8 @@ services:
         value: "168"
       - key: N8N_BASIC_AUTH_ACTIVE
         value: "true"
-        sync: false
       - key: N8N_BASIC_AUTH_USER
         value: hermes
-        sync: false
       - key: N8N_BASIC_AUTH_PASSWORD
         sync: false
       - key: PINTEREST_APP_ID
@@ -40,7 +34,5 @@ services:
         sync: false
       - key: PINTEREST_REDIRECT_URI
         value: https://hermes-pinterest.onrender.com/rest/oauth2-credential/callback
-    disk:
-      name: n8n-data
-      mountPath: /home/node/.n8n
-      sizeGB: 1
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=2048"
